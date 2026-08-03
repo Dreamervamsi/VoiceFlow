@@ -1,18 +1,16 @@
 from groq import Groq
 import wave
 import pyaudio
-import torch
+import numpy as np
 from google import genai
+
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-
-
 ai_client = Groq(api_key = os.getenv('GROQ_API_KEY'))
 gemini_client = genai.Client(api_key = os.getenv('GEMINI_API_KEY'))
-
 chat_model = gemini_client.chats.create(
             model = 'gemini-2.5-flash',
       )
@@ -38,21 +36,21 @@ def voice_agent():
     print("Listening...")
     try:
         while True:
-            if loop_counter >= 100 and len(audio_buffer) > 0:
+            if loop_counter >= 60 and len(audio_buffer) > 0:
                 print("Thank you")
                 break
             pcm_frame = stream.read(chunk_samples, exception_on_overflow=False)
 
-            audio_data = torch.frombuffer(pcm_frame, dtype=torch.int16).float() / 32768.0
+            audio_data = np.frombuffer(pcm_frame, dtype=np.int16).astype(np.float32) / 32768.0
         
-            audio_level = torch.abs(audio_data).mean().item()
+            audio_level = np.abs(audio_data).mean()
         
             is_speech = audio_level > 0.005
         
             if not is_speech:
                 if len(audio_buffer) > 0:
                     audio_buffer.append(pcm_frame)
-                if loop_counter < 100:
+                if loop_counter < 60:
                     loop_counter += 1
             else:
                 loop_counter = 0
@@ -61,39 +59,42 @@ def voice_agent():
     
         if audio_buffer:
             final_pcm_audio = b"".join(audio_buffer)
+
+            transcription = ai_client.audio.transcriptions.create(
+                    file=("recording.wav",final_pcm_audio),
+                    model="whisper-large-v3-turbo",
+                    response_format="text",
+                    language="en"
+                )
+            res = chat_model.send_message(transcription)
+            print(res.text)
+
             with wave.open("recording.wav", "wb") as f:
                 f.setnchannels(1)
                 f.setsampwidth(2)
                 f.setframerate(sample_rate)
                 f.writeframes(final_pcm_audio)
+                
             print("Saved as recording.wav")
 
-            try:
-                with open('recording.wav', 'rb') as f:
-                    transcription = ai_client.audio.transcriptions.create(
-                        file=f,
-                        model="whisper-large-v3-turbo",
-                        response_format="text",
-                        language="en"
-                    )
-                res = chat_model.send_message(transcription)
-                print(res.text)
-            except Exception as e:
-                print(f"Transcription error: {e}")
-
+    except Exception as e:
+        print(f"Transcription error: {e}")
     except KeyboardInterrupt:
         print("Stopped\n")
     finally:
         audio_buffer.clear()
         loop_counter = 0
 
-try:
-    while True:
+def main():
+    try:
         voice_agent()
-except KeyboardInterrupt:
-    print("\nShutting down...")
-finally:
-    stream.stop_stream()
-    stream.close()
-    audio.terminate()
-    print("Audio resources cleaned up")
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        stream.stop_stream()
+        stream.close()
+        audio.terminate()
+        print("Audio resources cleaned up")
+
+if __name__ == '__main__':
+    main()
