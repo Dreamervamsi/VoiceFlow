@@ -2,7 +2,9 @@ from groq import Groq
 import wave
 import pyaudio
 import numpy as np
+import io
 from google import genai
+
 
 import os
 from dotenv import load_dotenv
@@ -11,9 +13,10 @@ load_dotenv()
 
 ai_client = Groq(api_key = os.getenv('GROQ_API_KEY'))
 gemini_client = genai.Client(api_key = os.getenv('GEMINI_API_KEY'))
+
 chat_model = gemini_client.chats.create(
-            model = 'gemini-2.5-flash',
-      )
+    model = 'gemini-2.5-flash',
+)
 
 sample_rate = 16000
 frame_duration_ms = 30
@@ -60,8 +63,16 @@ def voice_agent():
         if audio_buffer:
             final_pcm_audio = b"".join(audio_buffer)
 
+            wav_buffer = io.BytesIO()
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(final_pcm_audio)
+            wav_buffer.seek(0)
+
             transcription = ai_client.audio.transcriptions.create(
-                    file=("recording.wav",final_pcm_audio),
+                    file=("recording.wav", wav_buffer.read()),
                     model="whisper-large-v3-turbo",
                     response_format="text",
                     language="en"
@@ -69,13 +80,21 @@ def voice_agent():
             res = chat_model.send_message(transcription)
             print(res.text)
 
-            with wave.open("recording.wav", "wb") as f:
-                f.setnchannels(1)
-                f.setsampwidth(2)
-                f.setframerate(sample_rate)
-                f.writeframes(final_pcm_audio)
-                
-            print("Saved as recording.wav")
+        tts_res = ai_client.audio.speech.create(
+            model = "canopylabs/orpheus-v1-english",
+            voice = "autumn",
+            response_format = "wav",
+            input = res.text
+        )
+        tts_stream = audio.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=24000,
+            output=True
+        )
+        tts_stream.write(tts_res.read())
+        tts_stream.stop_stream()
+        tts_stream.close()
 
     except Exception as e:
         print(f"Transcription error: {e}")
